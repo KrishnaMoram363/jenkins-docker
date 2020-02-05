@@ -12,7 +12,7 @@ pipeline {
       buildNameBase = "O-Series"
       mavenBuildVersion = "";
       jobType = "Daily"
-      ENVIRONMENT_TYPE = PROD
+      ENVIRONMENT_TYPE = "PROD"
       // environment values are DEV, QA, PROD
       //environmentType = getEnvironment()
 
