@@ -2,7 +2,7 @@ def nextBuildNumber = "";
 def gitProductionBranches = ['master','support/9.0sr0']
 
 pipeline {
-  agent {label 'windows'}
+  agent any
     environment {
       mvnHome = tool 'maven-3.2.5'
       antHome = tool 'ant-1.9.14'
@@ -11,7 +11,6 @@ pipeline {
       buildNameBase = "O-Series"
       mavenBuildVersion = "";
       jobType = "Daily"
-      ENVIRONMENT_TYPE = "QA"
       // environment values are DEV, QA, PROD
       //environmentType = getEnvironment()
 
@@ -56,7 +55,7 @@ pipeline {
               //Run build file
               //bat(/mvn clean install /)
               //bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
-              if ('PROD' == ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
+              if ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
                 //bat 'mvn clean deploy'
                 bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
               } else {
@@ -110,7 +109,7 @@ pipeline {
     }
     stage('Commit changes') {
       when {
-        expression { ('PROD' == ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
+        expression { ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
       }
       steps {
         script {
@@ -180,7 +179,7 @@ pipeline {
     }
     stage('Copy Install/Patch Files to Share') {
       when {
-        expression { ('PROD' == ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
+        expression { ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
       }
       steps {
         dir('./oseries-core') {
@@ -226,7 +225,7 @@ pipeline {
     }
     cleanup {
       script {
-        if ('PROD' != ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
+        if ('PROD' != env.ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
           echo 'Sending development only success email notification'
           notifyEmail()
         }
@@ -249,3 +248,4 @@ def notifyEmail() {
 //def getMavenPomVersion() {
 //  return readMavenPom(file:"${WORKSPACE}/oseries-version/pom.xml").getVersion()
 //}
+ 
