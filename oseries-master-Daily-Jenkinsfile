@@ -12,11 +12,11 @@ pipeline {
       buildNameBase = "O-Series"
       mavenBuildVersion = "";
       jobType = "Daily"
-      ENVIRONMENT_TYPE = "PROD"
+      ENVIRONMENT_TYPE = "QA"
       // environment values are DEV, QA, PROD
       //environmentType = getEnvironment()
 
-      gitUser = "git_oseries_bot_credentials"
+      gitUser = "git"
       gitUserEmail = "tpsbuild@vertexinc.com"
       gitURL = "https://github.com/vertexinc/oseries.git"
       gitURLShort = "github.com/vertexinc/oseries.git"
@@ -242,14 +242,12 @@ pipeline {
 }
 
 def notifyEmail() {
-  emailext attachLog: false,
-          body: '''${JELLY_SCRIPT, template="notify"}''',
-          subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
-          to: "${env.EMAIL_DISTRIBUTION}"
+  //emailext attachLog: false,
+  //        body: '''${JELLY_SCRIPT, template="notify"}''',
+  //        subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
+  //        to: "${env.EMAIL_DISTRIBUTION}"
 }
 
 //def getMavenPomVersion() {
 //  return readMavenPom(file:"${WORKSPACE}/oseries-version/pom.xml").getVersion()
 //}
- 
- 
