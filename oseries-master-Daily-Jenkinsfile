@@ -2,7 +2,7 @@ def nextBuildNumber = "";
 def gitProductionBranches = ['master','support/9.0sr0']
 
 pipeline {
-  agent any
+  agent {label 'windows'}
     environment {
       mvnHome = tool 'maven-3.2.5'
       antHome = tool 'ant-1.9.14'
