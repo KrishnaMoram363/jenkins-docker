@@ -243,7 +243,7 @@ def notifyEmail() {
   emailext attachLog: false,
           body: '''${JELLY_SCRIPT, template="notify"}''',
           subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
-          to: "${EMAIL_DISTRIBUTION}"
+          to: "${env.EMAIL_DISTRIBUTION}"
 }
 
 //def getMavenPomVersion() {
