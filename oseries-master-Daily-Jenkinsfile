@@ -39,6 +39,7 @@ pipeline {
     stage('Preparation'){
       steps {
         // Checkout code from GitHub
+        echo "In Preparation"
         checkout([$class: 'GitSCM', branches: [[name: "*/${gitBranch}"]], doGenerateSubmoduleConfigurations: false,
               extensions: [[$class: 'AuthorInChangelog'], [$class: 'CleanCheckout'], 
               [$class: 'LocalBranch', localBranch: "${gitBranch}"]],
