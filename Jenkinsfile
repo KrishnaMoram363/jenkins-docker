@@ -16,7 +16,7 @@ pipeline {
           echo "test pipeline"
           bat label: '', script: 'hostname'
       
-        }
+        } 
     }
   }
 }
