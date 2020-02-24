@@ -8,20 +8,22 @@ def String[] gitUserEmailsToIgnore = ["tpsbuild@vertexinc.com"]
 def gitProductionBranches = ['master','support/9.0sr0']
 
 pipeline {
-  agent any
+  agent {label 'windows'}
   environment {
     mvnHome = tool 'maven-3.2.5'
     antHome = tool 'ant-1.9.14'
     emailDistro = 'marcelo.todd@vertexinc.com'
+	EMAIL_DISTRIBUTION = 'Krishna.Moram@vertexinc.com'
     
     buildNameBase = "O-Series"
     mavenBuildVersion = "";
     jobType = "CI"
+	ENVIRONMENT_TYPE = "QA"
 
     staticMavenOrderFile = "o9-mods.txt"
     //gitUser = "d784079d-ac1f-482d-bb89-fafb0ac568cd"
     //gitUser = "git_oseries_bot_credentials"
-    gitUser = "git_oseries_bot_credentials"
+    gitUser = "git"
     gitURL = "https://github.com/vertexinc/oseries.git"
     gitURLShort = "github.com/vertexinc/oseries.git"
     //gitURL = "http://172.18.38.94:7777/git/scm_team/oseries-all.git"
@@ -157,7 +159,7 @@ pipeline {
                   if (mod != 'oseries-parent' && mod != 'oseries-core') {
                     bat 'mvn build-helper:parse-version versions:set versions:update-child-modules -DnewVersion="${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.incrementalVersion}.${parsedVersion.qualifier}.${parsedVersion.nextBuildNumber}"'
                     bat 'mvn versions:commit'
-                    if('PROD' == ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
+                    if('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
                       bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
                     } else {
                       bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
@@ -209,7 +211,7 @@ pipeline {
     }
     stage('Commit changes') {
       when {
-        expression { ('PROD' == ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
+        expression { ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
         expression { changedModules.size() > 0 && 
                       !(changedModules.contains('oseries-parent') && changedModules.size() == 1) && 
                       !(changedModules.contains('oseries-core') && changedModules.size() == 1) && 
@@ -270,7 +272,7 @@ pipeline {
     }
     cleanup {
       script {
-        if ('PROD' != ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
+        if ('PROD' != env.ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
           echo 'Sending development only success email notification'
           notifyEmail()
         }
@@ -284,10 +286,10 @@ pipeline {
 }
 
 def notifyEmail() {
-  emailext attachLog: false,
-          body: '''${JELLY_SCRIPT, template="notify"}''',
-          subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
-          to: "${EMAIL_DISTRIBUTION}"
+  //emailext attachLog: false,
+  //        body: '''${JELLY_SCRIPT, template="notify"}''',
+  //        subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
+  //        to: "${EMAIL_DISTRIBUTION}"
 }
 
 //def getMavenPomVersion() {
