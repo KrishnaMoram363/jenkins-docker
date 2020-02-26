@@ -63,17 +63,21 @@ pipeline {
           if (needToBuild(checkoutResponse.GIT_PREVIOUS_COMMIT, gitUserEmailsToIgnore )){
             changes = diffOutput.trim().tokenize("\n")
           
-            //println(changes)
+            println("++++++++++++++++++++++")
+	    println(changes)
 
             //remove the initial git diff command from the collection
             //changes.remove(0)
           
             //findChangedModules()
+	    println("++++++++++++++++++++++")
+	    println(buildOrderFile)
             for (String file in buildOrderFile) {
               buildOrder.add(file)
               buildIndicators.add(0)
             }
-
+	    println("-------------------------")
+            
             for(String file in changes) {
               def found = false
               while(found == false && file.lastIndexOf("/") != -1) {
