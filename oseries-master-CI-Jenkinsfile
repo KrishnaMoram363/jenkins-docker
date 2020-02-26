@@ -50,7 +50,7 @@ pipeline {
         // Checkout code from GitHub
         script {
           def checkoutResponse = ""
-          def buildOrderFile = new File("${WORKSPACE}\..\${staticMavenOrderFile}")
+          def buildOrderFile = new File("${WORKSPACE}\\..\\${staticMavenOrderFile}")
           
           checkoutResponse = checkout([$class: 'GitSCM', branches: [[name: "*/${gitBranch}"]], doGenerateSubmoduleConfigurations: false,
             extensions: [[$class: 'AuthorInChangelog'], [$class: 'CleanCheckout'], [$class: 'LocalBranch', localBranch: "${gitBranch}"]],
