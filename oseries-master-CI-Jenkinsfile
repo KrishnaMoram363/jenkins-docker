@@ -1,352 +1,350 @@
+import hudson.FilePath;
+import jenkins.model.Jenkins;
 def changes = [];
 def changedModules = [];
 def commandModules = [];
 def buildOrder = []
 def buildIndicators = []
-def changedArtifacts = [:]
+def changedArtifacts = [: ]
 def String[] gitUserEmailsToIgnore = ["tpsbuild@vertexinc.com"]
-def gitProductionBranches = ['master','support/9.0sr0']
-
+def gitProductionBranches = ['master', 'support/9.0sr0']
 pipeline {
-  agent {label 'windows'}
-  environment {
-    mvnHome = tool 'maven-3.2.5'
-    antHome = tool 'ant-1.9.14'
-    emailDistro = 'marcelo.todd@vertexinc.com'
-	EMAIL_DISTRIBUTION = 'Krishna.Moram@vertexinc.com'
-    
-    buildNameBase = "O-Series"
-    mavenBuildVersion = "";
-    jobType = "CI"
-	ENVIRONMENT_TYPE = "QA"
-
-    staticMavenOrderFile = "o9-mods.txt"
-    //gitUser = "d784079d-ac1f-482d-bb89-fafb0ac568cd"
-    //gitUser = "git_oseries_bot_credentials"
-    gitUser = "git"
-    gitURL = "https://github.com/vertexinc/oseries.git"
-    gitURLShort = "github.com/vertexinc/oseries.git"
-    //gitURL = "http://172.18.38.94:7777/git/scm_team/oseries-all.git"
-    gitBranch = "master"
-    
-    gitUserToIgnore = "tpsbuild@vertexinc.com"
-
-    artifactoryUrl = "http://cstqabld01:8081/artifactory/olite-builds"
-  }
-  triggers {
-    //Run Polling of GitHub every 10 minutes everyday of the week, will queue build if changes occur while ongoing build is happening
-    pollSCM ('H/10 * * * *')
-  }
-  //Set Build Options, disable concurrent builds, only keep certain number of builds, set overall max build timeout to 2 hours 30 minutes
-  options {
-    disableConcurrentBuilds()
-    buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '1'))
-    //timeout(time: 150, unit: 'MINUTES')
-  }
-  stages {
-    //lock(resource: 'o9_database') {
-    stage('Preparation'){
-      steps {
-        // Checkout code from GitHub
-        script {
-          def checkoutResponse = ""
-          def buildOrderFile = new File("c:\\jenkins\\workspace\\o9-mods.txt")
-          
-          checkoutResponse = checkout([$class: 'GitSCM', branches: [[name: "*/${gitBranch}"]], doGenerateSubmoduleConfigurations: false,
-            extensions: [[$class: 'AuthorInChangelog'], [$class: 'CleanCheckout'], [$class: 'LocalBranch', localBranch: "${gitBranch}"]],
-            submoduleCfg: [], userRemoteConfigs: [[credentialsId: "${gitUser}", url: "${gitURL}"]]])
-          
-          def diffOutput  = bat label: '', returnStdout: true, script: "git diff --name-only $checkoutResponse.GIT_PREVIOUS_COMMIT $checkoutResponse.GIT_COMMIT"
-          println("GIT_PREVIOUS_COMMIT = ${checkoutResponse.GIT_PREVIOUS_COMMIT}, GIT_COMMIT = ${checkoutResponse.GIT_COMMIT}")
-          
-          println("Was the build made by a non-Bot user account = "+ "for testing" )
-          if (true){
-            changes = diffOutput.trim().tokenize("\n")
-          
-            println("++++++++++++++++++++++")
-	    println(changes)
-
-            //remove the initial git diff command from the collection
-            //changes.remove(0)
-          
-            //findChangedModules()
-	    println("++++++++++++++++++++++")
-	    println(buildOrderFile)
-            for (String file in buildOrderFile) {
-              buildOrder.add(file)
-              buildIndicators.add(0)
-            }
-	    println("-------------------------")
-            
-            for(String file in changes) {
-              def found = false
-              while(found == false && file.lastIndexOf("/") != -1) {
-                file = file.substring(0, file.lastIndexOf("/"))
-                if(new File("${WORKSPACE}" + "\\" + file + "\\pom.xml").exists()) {
-                  //Check to see if the file encountered is a sub-module.
-                  if (file.indexOf("/")>-1){
-                    println("submodule commit encountered, traversing up directory to get to parent.")
-                    continue;
-                  }
-                  found = true;
-                  def index = buildOrder.indexOf(file)
-                  buildIndicators[index] = 1
-                  if(!changedModules.contains(file) && index >= 0) {
-                    println("changedModules added ${file}")
-                    changedModules.add(file)
-                  }
-                }
-              }
-              if(new File("${WORKSPACE}" + "\\" + file + "\\pom.xml").exists() && !found) {
-                def index = buildOrder.indexOf(file)
-                buildIndicators[index] = 1
-                if(!changedModules.contains(file) && index >= 0) {
-                  println("changedModules added ${file}")
-                  changedModules.add(file)
-                }
-              }
-            }
-            println("Number of Changed Modules to build = ${changedModules.size()}")
-            println("Changed Modules to build = ${changedModules}")
-          }
-        }
-      }
-    }
-    stage('Build oseries-parent') {
-      when {
-        expression { changedModules.size() > 0 }
-      }
-      steps {
-        dir('./oseries-parent') {
-          println("running oseries-parent")
-          withMaven() {
-            bat(/mvn clean install /)
-          }
-        }
-      }
-    }
-    stage('Refresh Database') {
-      when {
-        expression { changedModules.size() > 0 }
-      }
-      steps {
-        // Clean target directories
-        dir('./oseries-run-ddl') {
-          println("running oseries-run-ddl")
-          withMaven(){
-            bat(/mvn clean install /)
-          }
-          bat(/loaded-quick.bat  /)
-          bat(/scratch-quick.bat  /)
-        }
-      }
-    }
-    stage('Build Changed Modules') {
-      when {
-        expression { changedModules.size() > 0 }
-      }
-      steps {
-        script{
-          println("buildOrder =============== ${buildOrder}")
-          //println("buildIndicators =============== ${buildIndicators}")
-          for(String mod in buildOrder) {
-            if(buildIndicators[buildOrder.indexOf(mod)] == 1) {
-            def nextBuildNumber = ""
-            def nextArtifactId = ""
-              dir(mod) {
-                println("==========================================================================")
-                println("changed Dir = ${mod}")
-                println("==========================================================================")
-                withMaven(){
-                  //Run build file
-                  //bat(/mvn clean install /)
-                  if (mod != 'oseries-parent' && mod != 'oseries-core') {
-                    bat 'mvn build-helper:parse-version versions:set versions:update-child-modules -DnewVersion="${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.incrementalVersion}.${parsedVersion.qualifier}.${parsedVersion.nextBuildNumber}"'
-                    bat 'mvn versions:commit'
-                    if('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
-                      bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
-                    } else {
-                      bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
-                    }
-                  }
-                  else {
-                    bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
-                  }
-                  //bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
-                }
-                def artifactOutput = bat(label: '', returnStdout: true, script: 'mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.artifactId -q -DforceStdout')
-                //The output from the maven commands will return 3 lines of data, we only care about the third
-                def artifactId = artifactOutput.tokenize("\n").get(2)
-                //println("artifactId: " + artifactId)
-                def versionOutput = bat(label: '', returnStdout: true, script: 'mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version -q -DforceStdout')                  
-                def version = versionOutput.tokenize("\n").get(2)
-                //println("version: " + version)
-                changedArtifacts.putAt(mod, ["artifactId" : artifactId, "version" : version])
-                nextArtifactId = artifactId
-                nextBuildNumber = version
-              }
-              println("==========================================================================")
-              println("changed Dir = ./oseries-parent to install changes for parent")
-              println("==========================================================================")
-              dir("./oseries-parent"){
-                bat 'mvn versions:set-property -Dproperty="com.vertexinc.oseries.'+ nextArtifactId +'" -DnewVersion="' + nextBuildNumber + '"'
-                bat 'mvn versions:commit'
-                bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
-              }
-            }
-          }
-        }
-      }
-    }
-    stage('Update parent') {
-      when {
-        expression { changedModules.size() > 0 }
-      }
-      steps {
-        script{
-        dir('./oseries-parent') {
-          for(artifact in changedArtifacts.keySet()) {
-            //Update artifact version
-            bat 'mvn versions:set-property -Dproperty="com.vertexinc.oseries.' + changedArtifacts.getAt(artifact).getAt("artifactId") + '" -DnewVersion="' + changedArtifacts.getAt(artifact).getAt("version") + '"'
-          }
-        }
-        }
-      }
-    }
-    stage('Commit changes') {
-      when {
-        expression { ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
-        expression { changedModules.size() > 0 && 
-                      !(changedModules.contains('oseries-parent') && changedModules.size() == 1) && 
-                      !(changedModules.contains('oseries-core') && changedModules.size() == 1) && 
-                      !(changedModules.contains('oseries-version') && changedModules.size() == 1) &&
-                      !(changedModules.contains('oseries-core') && changedModules.contains('oseries-version') && changedModules.size() == 2) &&
-                      !(changedModules.contains('oseries-core') && changedModules.contains('oseries-parent') && changedModules.size() == 2) &&
-                      !(changedModules.contains('oseries-version') && changedModules.contains('oseries-parent') && changedModules.size() == 2) &&
-                      !(changedModules.contains('oseries-version') && changedModules.contains('oseries-parent') && changedModules.contains('oseries-core') && changedModules.size() == 3)}
-      }
-      steps {
-        //sh 'git config --global credential.helper cache'
-        //sh 'git config --global push.default simple'
-        withCredentials([usernamePassword(credentialsId: 'git_oseries_bot_credentials', passwordVariable: 'gitPassword', usernameVariable: 'gitUsername')]) {
-          bat "git config --global user.name ${gitUsername}"
-          bat "git config --global user.password ${gitPassword}"
-          bat "git remote set-url origin https://${gitUsername}:${gitPassword}@${gitURLShort}"
-          bat (/git add -u/)
-          bat "git pull origin ${gitBranch}"
-          bat 'git commit -m "pom versions incremented for ' + changedArtifacts.keySet().join(",") + '"'
-          bat 'git remote show origin'
-          bat "git push --set-upstream origin ${gitBranch}" 
-        }
-      }
-    }
-    stage('Clean Up') {
-      when {
-        expression { changedModules.size() > 0 }
-      }
-      steps {
-          println("deleteDir()")
-          deleteDir()
-      }
-    }
-  }
-  post {
-    always {
-      script {
-        echo "Jenkins build post status is ${currentBuild.currentResult}"
-      }
-    }
-    success {
-      script {
-        currentBuild.result = "SUCCESS"
-        echo "Build marked as SUCCESS"
-      }
-    }
-    failure {
-      script {
-        currentBuild.result = "FAILURE"
-        echo "Build marked as FAILURE"
-      }
-    }
-    fixed {
-      script {
-        echo "Build marked as FIXED. Sending email notification"
-      }
-      notifyEmail()
-    }
-    cleanup {
-      script {
-        if ('PROD' != env.ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
-          echo 'Sending development only success email notification'
-          notifyEmail()
-        }
-        if (currentBuild.result != 'SUCCESS' ) {
-          echo 'Sending failure or aborted email notification'
-          notifyEmail()
-        }
-      }
-    }
-  }
-}
-
-def notifyEmail() {
-  //emailext attachLog: false,
-  //        body: '''${JELLY_SCRIPT, template="notify"}''',
-  //        subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
-  //        to: "${EMAIL_DISTRIBUTION}"
-}
-
-//def getMavenPomVersion() {
-//  return readMavenPom(file:"${WORKSPACE}/pom.xml").getVersion()
-//}
-
-def findChangedModules() {
-  for(String file in changes) {
-    def found = false
-    while(found == false && file.lastIndexOf("/") != -1) {
-      file = file.substring(0, file.lastIndexOf("/"))
-      if(new File("${WORKSPACE}" + "/" + file + "/pom.xml").exists()) {
-        found = true;
-        if(!changedModules.contains(file)) {
-          changedModules.add(file)
-        }
-      }
-    }
-    if(new File("${WORKSPACE}" + "/" + file + "/pom.xml").exists() && !found) {
-      if(!changedModules.contains(file)) {
-        changedModules.add(file)
-      }
-    }
-  }
-}
-
-def needToBuild(String lastCommitHash, String[] emailsToIgnore) {
-  def gitLogOutput = bat returnStdout:true, script:'git log -s --pretty="%%H %%ae" --since="1 day"'
-  def gitLines = gitLogOutput.tokenize("\n")
-  //Git output leads with empty line and line containing command, actual results come after that
-  gitLines.remove(0)
-  gitLines.remove(0)
-  println("-----------------")
-  println(gitLines)
-  def needBuild = false
-  def doneSearching = false
-  for(String line in gitLines) {
-    if(!doneSearching) {
-        def lineFields = line.tokenize()
-        println("-----------------")
-        println(lineFields )
-        if(!lineFields.get(0).equals(lastCommitHash)) {
-            for(String email in emailsToIgnore) {
-                if(!email.toLowerCase().equals(lineFields.get(1).toLowerCase())) {
-                    needBuild = true
-                    doneSearching = true
-                }
-            }
-        }  
-        else {
-            doneSearching = true
-        }
-    }
-  }
-  return needBuild
-}
+	agent {
+		label 'windows'
+	}
+	environment {
+		mvnHome = tool 'maven-3.2.5'
+		antHome = tool 'ant-1.9.14'
+		emailDistro = 'marcelo.todd@vertexinc.com'
+		EMAIL_DISTRIBUTION = 'Krishna.Moram@vertexinc.com'
+		buildNameBase = "O-Series"
+		mavenBuildVersion = "";
+		jobType = "CI"
+		ENVIRONMENT_TYPE = "QA"
+		staticMavenOrderFile = "o9-mods.txt"
+			//gitUser = "d784079d-ac1f-482d-bb89-fafb0ac568cd"
+			//gitUser = "git_oseries_bot_credentials"
+		gitUser = "git"
+		gitURL = "https://github.com/vertexinc/oseries.git"
+		gitURLShort = "github.com/vertexinc/oseries.git"
+			//gitURL = "http://172.18.38.94:7777/git/scm_team/oseries-all.git"
+		gitBranch = "master"
+		gitUserToIgnore = "tpsbuild@vertexinc.com"
+		artifactoryUrl = "http://cstqabld01:8081/artifactory/olite-builds"
+	}
+	triggers {
+		//Run Polling of GitHub every 10 minutes everyday of the week, will queue build if changes occur while ongoing build is happening
+		pollSCM('H/10 * * * *')
+	}
+	//Set Build Options, disable concurrent builds, only keep certain number of builds, set overall max build timeout to 2 hours 30 minutes
+	options {
+		disableConcurrentBuilds()
+		buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '1'))
+			//timeout(time: 150, unit: 'MINUTES')
+	}
+	stages {
+		//lock(resource: 'o9_database') {
+		stage('Preparation') {
+			steps {
+				// Checkout code from GitHub
+				script {
+					def checkoutResponse = ""
+					def buildOrderFile = new FilePath(Jenkins.getInstance().getComputer(env['NODE_NAME']).getChannel(), "${WORKSPACE}/../${staticMavenOrderFile}").readToString().trim().tokenize("\n")
+					checkoutResponse = checkout([$class: 'GitSCM', branches: [
+							[name: "*/${gitBranch}"]
+						], doGenerateSubmoduleConfigurations: false,
+						extensions: [
+							[$class: 'AuthorInChangelog'],
+							[$class: 'CleanCheckout'],
+							[$class: 'LocalBranch', localBranch: "${gitBranch}"]
+						],
+						submoduleCfg: [], userRemoteConfigs: [
+							[credentialsId: "${gitUser}", url: "${gitURL}"]
+						]
+					])
+					def diffOutput = bat label: '', returnStdout: true, script: "git diff --name-only $checkoutResponse.GIT_PREVIOUS_COMMIT $checkoutResponse.GIT_COMMIT"
+					println("Was the build made by a non-Bot user account = "+needToBuild(checkoutResponse.GIT_PREVIOUS_COMMIT, gitUserEmailsToIgnore ))
+						if(needToBuild(checkoutResponse.GIT_PREVIOUS_COMMIT, gitUserEmailsToIgnore)) {
+							changes = diffOutput.trim().tokenize("\n")
+							println(changes)
+								//remove the initial git diff command from the collection
+								//changes.remove(0)
+								//findChangedModules()
+							for(String file in buildOrderFile) {
+								buildOrder.add(file.trim())
+								buildIndicators.add(0)
+							}
+							for(String file in changes) {
+								def found = false
+								while(found == false && file.lastIndexOf("/") != -1) {
+									file = file.substring(0, file.lastIndexOf("/"))
+									println(new FilePath(Jenkins.getInstance().getComputer(env['NODE_NAME']).getChannel(), "${WORKSPACE}" + "\\" + file + "\\pom.xml").exists())
+									if(new FilePath(Jenkins.getInstance().getComputer(env['NODE_NAME']).getChannel(), "${WORKSPACE}" + "\\" + file + "\\pom.xml").exists()) {
+										//Check to see if the file encountered is a sub-module.
+										if(file.indexOf("/") > -1) {
+											println("submodule commit encountered, traversing up directory to get to parent.")
+											continue;
+										}
+										found = true;
+										def index = buildOrder.indexOf(file.trim())
+										buildIndicators[index] = 1
+										if(!changedModules.contains(file) && index >= 0) {
+											println("changedModules added ${file}")
+											changedModules.add(file)
+										}
+									}
+								}
+								if(new FilePath(Jenkins.getInstance().getComputer(env['NODE_NAME']).getChannel(), "${WORKSPACE}" + "\\" + file + "\\pom.xml").exists() && !found) {
+									def index = buildOrder.indexOf(file)
+									buildIndicators[index] = 1
+									if(!changedModules.contains(file) && index >= 0) {
+										println("changedModules added ${file}")
+										changedModules.add(file)
+									}
+								}
+							}
+							println("Number of Changed Modules to build = ${changedModules.size()}")
+							println("Changed Modules to build = ${changedModules}")
+						}
+					}
+				}
+			}
+			stage('Build oseries-parent') {
+				when {
+					expression {
+						changedModules.size() > 0
+					}
+				}
+				steps {
+					dir('./oseries-parent') {
+						println("running oseries-parent")
+						withMaven() {
+							bat(/mvn clean install /)
+						}
+					}
+				}
+			}
+			stage('Refresh Database') {
+				when {
+					expression {
+						changedModules.size() > 0
+					}
+				}
+				steps {
+					// Clean target directories
+					dir('./oseries-run-ddl') {
+						println("running oseries-run-ddl")
+						withMaven() {
+							bat(/mvn clean install /)
+						}
+						bat(/loaded-quick.bat  /)
+						bat(/scratch-quick.bat  /)
+					}
+				}
+			}
+			stage('Build Changed Modules') {
+				when {
+					expression {
+						changedModules.size() > 0
+					}
+				}
+				steps {
+					script {
+						println("buildOrder =============== ${buildOrder}")
+							//println("buildIndicators =============== ${buildIndicators}")
+						for(String mod in buildOrder) {
+							if(buildIndicators[buildOrder.indexOf(mod)] == 1) {
+								def nextBuildNumber = ""
+								def nextArtifactId = ""
+								dir(mod) {
+									println("==========================================================================")
+									println("changed Dir = ${mod}")
+									println("==========================================================================")
+									withMaven() {
+										//Run build file
+										//bat(/mvn clean install /)
+										if(mod != 'oseries-parent' && mod != 'oseries-core') {
+											bat 'mvn build-helper:parse-version versions:set versions:update-child-modules -DnewVersion="${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.incrementalVersion}.${parsedVersion.qualifier}.${parsedVersion.nextBuildNumber}"'
+											bat 'mvn versions:commit'
+											if('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
+												bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+											} else {
+												bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+											}
+										} else {
+											bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+										}
+										//bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+									}
+									def artifactOutput = bat(label: '', returnStdout: true, script: 'mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.artifactId -q -DforceStdout')
+										//The output from the maven commands will return 3 lines of data, we only care about the third
+									def artifactId = artifactOutput.tokenize("\n").get(2)
+										//println("artifactId: " + artifactId)
+									def versionOutput = bat(label: '', returnStdout: true, script: 'mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version -q -DforceStdout')
+									def version = versionOutput.tokenize("\n").get(2)
+										//println("version: " + version)
+									changedArtifacts.putAt(mod, ["artifactId": artifactId, "version": version])
+									nextArtifactId = artifactId
+									nextBuildNumber = version
+								}
+								println("==========================================================================")
+								println("changed Dir = ./oseries-parent to install changes for parent")
+								println("==========================================================================")
+								dir("./oseries-parent") {
+									bat 'mvn versions:set-property -Dproperty="com.vertexinc.oseries.' + nextArtifactId + '" -DnewVersion="' + nextBuildNumber + '"'
+									bat 'mvn versions:commit'
+									bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+								}
+							}
+						}
+					}
+				}
+			}
+			stage('Update parent') {
+				when {
+					expression {
+						changedModules.size() > 0
+					}
+				}
+				steps {
+					script {
+						dir('./oseries-parent') {
+							for(artifact in changedArtifacts.keySet()) {
+								//Update artifact version
+								bat 'mvn versions:set-property -Dproperty="com.vertexinc.oseries.' + changedArtifacts.getAt(artifact).getAt("artifactId") + '" -DnewVersion="' + changedArtifacts.getAt(artifact).getAt("version") + '"'
+							}
+						}
+					}
+				}
+			}
+			stage('Commit changes') {
+				when {
+					expression {
+						('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1)
+					}
+					expression {
+						changedModules.size() > 0 && !(changedModules.contains('oseries-parent') && changedModules.size() == 1) && !(changedModules.contains('oseries-core') && changedModules.size() == 1) && !(changedModules.contains('oseries-version') && changedModules.size() == 1) && !(changedModules.contains('oseries-core') && changedModules.contains('oseries-version') && changedModules.size() == 2) && !(changedModules.contains('oseries-core') && changedModules.contains('oseries-parent') && changedModules.size() == 2) && !(changedModules.contains('oseries-version') && changedModules.contains('oseries-parent') && changedModules.size() == 2) && !(changedModules.contains('oseries-version') && changedModules.contains('oseries-parent') && changedModules.contains('oseries-core') && changedModules.size() == 3)
+					}
+				}
+				steps {
+					//sh 'git config --global credential.helper cache'
+					//sh 'git config --global push.default simple'
+					withCredentials([usernamePassword(credentialsId: 'git_oseries_bot_credentials', passwordVariable: 'gitPassword', usernameVariable: 'gitUsername')]) {
+						bat "git config --global user.name ${gitUsername}"
+						bat "git config --global user.password ${gitPassword}"
+						bat "git remote set-url origin https://${gitUsername}:${gitPassword}@${gitURLShort}"
+						bat(/git add -u/)
+						bat "git pull origin ${gitBranch}"
+						bat 'git commit -m "pom versions incremented for ' + changedArtifacts.keySet().join(",") + '"'
+						bat 'git remote show origin'
+						bat "git push --set-upstream origin ${gitBranch}"
+					}
+				}
+			}
+			stage('Clean Up') {
+				when {
+					expression {
+						changedModules.size() > 0
+					}
+				}
+				steps {
+					println("deleteDir()")
+					deleteDir()
+				}
+			}
+		}
+		post {
+			always {
+				script {
+					echo "Jenkins build post status is ${currentBuild.currentResult}"
+				}
+			}
+			success {
+				script {
+					currentBuild.result = "SUCCESS"
+					echo "Build marked as SUCCESS"
+				}
+			}
+			failure {
+				script {
+					currentBuild.result = "FAILURE"
+					echo "Build marked as FAILURE"
+				}
+			}
+			fixed {
+				script {
+					echo "Build marked as FIXED. Sending email notification"
+				}
+				notifyEmail()
+			}
+			cleanup {
+				script {
+					if('PROD' != env.ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
+						echo 'Sending development only success email notification'
+						notifyEmail()
+					}
+					if(currentBuild.result != 'SUCCESS') {
+						echo 'Sending failure or aborted email notification'
+						notifyEmail()
+					}
+				}
+			}
+		}
+	}
+	def notifyEmail() {
+			//emailext attachLog: false,
+			//        body: '''${JELLY_SCRIPT, template="notify"}''',
+			//        subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
+			//        to: "${EMAIL_DISTRIBUTION}"
+		}
+		//def getMavenPomVersion() {
+		//  return readMavenPom(file:"${WORKSPACE}/pom.xml").getVersion()
+		//}
+	def findChangedModules() {
+		for(String file in changes) {
+			def found = false
+			while(found == false && file.lastIndexOf("/") != -1) {
+				file = file.substring(0, file.lastIndexOf("/"))
+				if(new FilePath(Jenkins.getInstance().getComputer(env['NODE_NAME']).getChannel(), "${WORKSPACE}" + "/" + file + "/pom.xml").exists()) {
+					found = true;
+					if(!changedModules.contains(file)) {
+						changedModules.add(file)
+					}
+				}
+			}
+			if(new FilePath(Jenkins.getInstance().getComputer(env['NODE_NAME']).getChannel(), "${WORKSPACE}" + "/" + file + "/pom.xml").exists() && !found) {
+				if(!changedModules.contains(file)) {
+					changedModules.add(file)
+				}
+			}
+		}
+	}
+	def needToBuild(String lastCommitHash, String[] emailsToIgnore) {
+		def gitLogOutput = bat returnStdout: true, script: 'git log -s --pretty="%%H %%ae" --since="1 day"'
+		def gitLines = gitLogOutput.tokenize("\n")
+			//Git output leads with empty line and line containing command, actual results come after that
+		gitLines.remove(0)
+		gitLines.remove(0)
+		println("-----------------")
+		println(gitLines)
+		def needBuild = false
+		def doneSearching = false
+		for(String line in gitLines) {
+			if(!doneSearching) {
+				def lineFields = line.tokenize()
+				println("-----------------")
+				println(lineFields)
+				if(!lineFields.get(0).equals(lastCommitHash)) {
+					for(String email in emailsToIgnore) {
+						if(!email.toLowerCase().equals(lineFields.get(1).toLowerCase())) {
+							needBuild = true
+							doneSearching = true
+						}
+					}
+				} else {
+					doneSearching = true
+				}
+			}
+		}
+		return needBuild
+	} 
