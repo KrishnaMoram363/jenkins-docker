@@ -249,7 +249,7 @@ pipeline {
 				}
 				steps {
 					println("deleteDir()")
-					deleteDir()
+					//deleteDir()
 				}
 			}
 		}
