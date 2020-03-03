@@ -22,7 +22,7 @@ pipeline {
       gitURLShort = "github.com/vertexinc/oseries.git"
       gitBranch = "master"
 
-      artifactoryUrl = "http://cstqabld01:8081/artifactory/olite-builds"
+      artifactoryUrl = "http://binrepo.cst.vertexinc.com/artifactory/oseries"
     }
   triggers {
     //Runs Nightly at 11:00 PM, Sunday through Friday
