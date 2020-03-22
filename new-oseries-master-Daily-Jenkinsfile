@@ -1,0 +1,253 @@
+def nextBuildNumber = "";
+def gitProductionBranches = ['master','support/9.0sr0']
+
+pipeline {
+  agent {label 'windows'}
+    environment {
+      mvnHome = tool 'maven-3.2.5'
+      antHome = tool 'ant-1.9.14'
+      emailDistro = 'marcelo.todd@vertexinc.com'
+      EMAIL_DISTRIBUTION = 'Krishna.Moram@vertexinc.com'
+
+      buildNameBase = "O-Series"
+      mavenBuildVersion = "";
+      jobType = "Daily"
+      ENVIRONMENT_TYPE = "QA"
+      // environment values are DEV, QA, PROD
+      //environmentType = getEnvironment()
+
+      gitUser = "git"
+      gitUserEmail = "tpsbuild@vertexinc.com"
+      gitURL = "https://github.com/vertexinc/oseries.git"
+      gitURLShort = "github.com/vertexinc/oseries.git"
+      gitBranch = "support/9.0sr0"
+
+      artifactoryUrl = "http://binrepo.cst.vertexinc.com/artifactory/oseries"
+    }
+  triggers {
+    //Runs Nightly at 11:00 PM, Sunday through Friday
+     cron ('0 23 * * *')
+  }
+  //Set Build Options, disable concurrent builds, only keep certain number of builds, set overall max build timeout to 2 hours 30 minutes
+  options {
+        disableConcurrentBuilds()
+        //buildDiscarder(logRotator(numToKeepStr: '5', artifactDaysToKeepStr: '3', artifactNumToKeepStr: '1'))\
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
+        timeout(time: 150, unit: 'MINUTES')
+  }
+  stages {
+    stage('Preparation'){
+      steps {
+        // Checkout code from GitHub
+        echo "In Preparation"
+        checkout([$class: 'GitSCM', branches: [[name: "*/${gitBranch}"]], doGenerateSubmoduleConfigurations: false,
+              extensions: [[$class: 'AuthorInChangelog'], [$class: 'CleanCheckout'], 
+              [$class: 'LocalBranch', localBranch: "${gitBranch}"]],
+              submoduleCfg: [], userRemoteConfigs: [[credentialsId: "${gitUser}", url: "${gitURL}"]]])
+
+
+      }
+    }
+    stage('Version oseries Modules') {
+      steps {
+        script{
+          dir("./oseries-version") {
+            withMaven() {
+              bat 'mvn build-helper:parse-version versions:set versions:update-child-modules -DnewVersion="${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.incrementalVersion}.${parsedVersion.qualifier}.${parsedVersion.nextBuildNumber}"'
+              bat "mvn versions:commit"
+              //Run build file
+              //bat(/mvn clean install /)
+              //bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+              if ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) {
+                //bat 'mvn clean deploy'
+                bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+              } else {
+                bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+                //bat 'mvn clean install'
+              }
+            }
+            def artifactOutput = bat(label: '', returnStdout: true, script: 'mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.artifactId -q -DforceStdout')
+            //The output from the maven commands will return 3 lines of data, we only care about the third
+            def artifactId = artifactOutput.tokenize("\n").get(2)
+            //println("artifactId: " + artifactId)
+            def versionOutput = bat(label: '', returnStdout: true, script: 'mvn org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version -q -DforceStdout')
+            nextBuildNumber = versionOutput.tokenize("\n").get(2)
+            //println("version: " + version)
+          }
+        }
+      }
+    }
+    stage('Update oseries-parent') {
+      steps {
+        script{
+        dir('./oseries-parent') {
+            bat 'mvn versions:set-property -Dproperty="com.vertexinc.oseries.vertex-oseries-version" -DnewVersion='+nextBuildNumber+'' 
+            bat 'mvn versions:set-property -Dproperty="com.vertexinc.oseries.vertex-oseries-core" -DnewVersion='+nextBuildNumber+'' 
+              withMaven(){
+            //Update artifact version
+            bat "mvn versions:commit"
+            bat "mvn clean install"
+              }
+          }
+            dir("./oseries-core") {
+              bat "mvn build-helper:parse-version versions:set versions:update-child-modules -DnewVersion=${nextBuildNumber}"
+              bat "mvn versions:commit"
+            //withMaven(){
+              //Run build file
+              //bat(/mvn clean install /)
+              //bat "mvn clean install"
+
+              //bat "mvn clean deploy"
+              //bat "mvn clean deploy -DaltDeploymentRepository=testRepo::default::${artifactoryUrl}"
+            //}
+          }
+          
+          
+          
+          
+          //mavenBuildVersion = getMavenPomVersion() 
+          currentBuild.displayName = "${nextBuildNumber}"
+        }
+      }
+    }
+    stage('Commit changes') {
+      when {
+        expression { ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
+      }
+      steps {
+        script {
+        //sh 'git config --global credential.helper cache'
+        //sh 'git config --global push.default simple'
+          withCredentials([usernamePassword(credentialsId: 'git_oseries_bot_credentials', passwordVariable: 'gitPassword', usernameVariable: 'gitUsername')]) {
+            bat "git config --global user.name ${gitUsername}"
+            bat "git config --global user.password ${gitPassword}"
+            bat "git remote set-url origin https://${gitUsername}:${gitPassword}@${gitURLShort}"
+            bat (/git add -u/)
+            bat "git pull origin ${gitBranch}"
+            bat 'git commit -m "pom versions incremented for oseries-version, oseries-parent"'
+            bat "git push --set-upstream origin ${gitBranch}"
+            bat "git tag -a v${nextBuildNumber} -m\"O Series version updated to ${nextBuildNumber}\" "
+            bat "git push --tags origin ${gitBranch}"
+            //bat"mvn -B scm:tag -Dtag=testJenkins_v${nextBuildNumber} -Dusername=${gitUsername} -Dpassword=${gitPassword}"
+            //dir('./oseries-parent') {
+              //withMaven() {
+                //bat"mvn -B scm:tag -Dtag=testJenkins_v${nextBuildNumber} -Dusername=${gitUsername} -Dpassword=${gitPassword}"
+              //}
+            //}
+          }
+        }
+      }
+    }
+    stage('Build oseries-parent') {
+      steps {
+        // Clean target directories
+        dir('./oseries-parent') {
+          withMaven() {
+            bat(/mvn clean install /)
+          }
+        }
+      }
+    }
+    stage('Refresh Database') {
+      steps {
+        // Clean target directories
+        dir('./oseries-run-ddl') {
+          withMaven() {
+            bat(/mvn clean install /)
+          }
+          bat(/loaded-quick.bat  /)
+          bat(/scratch-quick.bat  /)
+        }
+      }
+    }
+    stage('Package oseries-core'){
+      steps {
+
+        dir('./oseries-core') {
+          withMaven() {
+            bat "mvn clean install"
+          }
+        }
+        
+        bat "dir oseries-core\\patch-central\\target"
+        bat "dir oseries-core\\patch-pos\\target"
+        bat "dir oseries-core\\product-files\\target\\schema-doc"
+        bat "dir oseries-core\\product-files\\target\\oseries-core"
+        
+        archiveArtifacts 'oseries-core/patch-central/target/vertex-o-series-*.jar'
+        archiveArtifacts 'oseries-core/patch-pos/target/vertex-o-series-*.jar'
+        archiveArtifacts 'oseries-core/product-files/target/schema-doc/TMIEDocuments.zip'
+        archiveArtifacts 'oseries-core/product-files/target/oseries-core/vertex-oseries-client.zip'
+      }
+    }
+    stage('Copy Install/Patch Files to Share') {
+      when {
+        expression { ('PROD' == env.ENVIRONMENT_TYPE && gitProductionBranches.indexOf(gitBranch) != -1) }
+      }
+      steps {
+        dir('./oseries-core') {
+          bat "ant -f build-stage-files.xml release-e2e"
+        }
+      }
+    }
+    stage('Clean Up') {
+      steps {
+        // Clean target directories
+        echo ("deleteDir() here")
+        sleep 200
+        dir('./oseries-run-ddl') {
+          withMaven() {
+            bat "mvn clean"
+          }
+        }
+        dir('./oseries-core') {
+          withMaven() {
+            bat "mvn clean"
+          }
+        }
+      }
+    }
+  }
+  post {
+    always {
+      script {
+        echo "Jenkins build post status is ${currentBuild.currentResult}"
+      }
+    }
+    success {
+      script {
+        currentBuild.result = "SUCCESS"
+        echo "Build marked as SUCCESS"
+      }
+    }
+    failure {
+      script {
+        currentBuild.result = "FAILURE"
+        echo "Build marked as FAILURE"
+      }
+    }
+    cleanup {
+      script {
+        if ('PROD' != env.ENVIRONMENT_TYPE && currentBuild.result == 'SUCCESS') {
+          echo 'Sending development only success email notification'
+          notifyEmail()
+        }
+        if (currentBuild.result != 'SUCCESS' ) {
+          echo 'Sending failure or aborted email notification'
+          notifyEmail()
+        }
+      }
+    }
+  }
+}
+
+def notifyEmail() {
+  //emailext attachLog: false,
+  //        body: '''${JELLY_SCRIPT, template="notify"}''',
+  //        subject: "Status: ${currentBuild.result ?: 'SUCCESS'} - Job \'${env.JOB_NAME}:${env.BUILD_NUMBER}\'",
+  //        to: "${env.EMAIL_DISTRIBUTION}"
+}
+
+//def getMavenPomVersion() {
+//  return readMavenPom(file:"${WORKSPACE}/oseries-version/pom.xml").getVersion()
+//}
