@@ -28,7 +28,7 @@ pipeline {
 		gitURL = "https://github.com/vertexinc/oseries.git"
 		gitURLShort = "github.com/vertexinc/oseries.git"
 			//gitURL = "http://172.18.38.94:7777/git/scm_team/oseries-all.git"
-		gitBranch = "support/9.0sr0"
+		gitBranch = "Jenkins_test_branch"
 		gitUserToIgnore = "tpsbuild@vertexinc.com"
 		artifactoryUrl = "http://cstqabld01:8081/artifactory/olite-builds"
 	}
