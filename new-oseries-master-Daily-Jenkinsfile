@@ -20,7 +20,7 @@ pipeline {
       gitUserEmail = "tpsbuild@vertexinc.com"
       gitURL = "https://github.com/vertexinc/oseries.git"
       gitURLShort = "github.com/vertexinc/oseries.git"
-      gitBranch = "support/9.0sr0"
+      gitBranch = "Jenkins_test_branch"
 
       artifactoryUrl = "http://binrepo.cst.vertexinc.com/artifactory/oseries"
     }
